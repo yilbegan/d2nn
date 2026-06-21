@@ -6,13 +6,14 @@ import numpy as np
 import torch
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.artist import Artist
-from numpy.typing import NDArray
 
 from ..models import DiffractiveGenerativeModel
 
+type Frame = np.ndarray[tuple[int, int], np.dtype[np.float32]]
+
 
 def plot_grid(
-    images: NDArray[np.float32],
+    images: np.ndarray[tuple[int, int, int], np.dtype[np.float32]],
     path: pathlib.Path | str,
     num_classes: int,
     samples_per_digit: int,
@@ -80,7 +81,9 @@ def plot_generated_digits(
     )
 
 
-def intensity_frame(field: torch.Tensor) -> NDArray[np.float32]:
+def intensity_frame(
+    field: torch.Tensor,
+) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
     intensity = (field.abs() ** 2)[0].cpu().numpy()
     low, high = np.quantile(intensity, [0.05, 0.95])
     return np.clip(intensity, low, high)
@@ -92,7 +95,7 @@ def decoder_intensities(
     device: torch.device,
     label: int,
     noise: torch.Tensor | None,
-) -> tuple[list[NDArray[np.float32]], list[str]]:
+) -> tuple[list[Frame], list[str]]:
     model.eval()
     noise_size = model.encoder.in_size
     if noise is None:
@@ -101,7 +104,7 @@ def decoder_intensities(
     labels = torch.tensor([label], device=device)
     field, _ = model.encoder(noise, labels)
 
-    intensities: list[NDArray[np.float32]] = []
+    intensities: list[Frame] = []
     titles: list[str] = []
     decoder = model.decoder
     for idx, layer in enumerate(decoder.layers):
@@ -117,7 +120,7 @@ def decoder_intensities(
 
 
 def plot_intensity_chart(
-    intensities: list[NDArray[np.float32]],
+    intensities: list[Frame],
     titles: list[str],
     path: pathlib.Path,
 ) -> None:
@@ -141,7 +144,7 @@ def plot_intensity_chart(
 
 
 def animate_intensity(
-    intensities: list[NDArray[np.float32]],
+    intensities: list[Frame],
     titles: list[str],
     path: pathlib.Path,
     delay: float,
