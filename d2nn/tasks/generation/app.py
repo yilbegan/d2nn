@@ -113,7 +113,7 @@ def train(
     results_path = pathlib.Path(TASK_DATA_DIR) / "runs" / run_id
     results_path.mkdir(parents=True)
 
-    torch.save(model.state_dict(), results_path / "d2nn_gen_mnist.pt")
+    model.save(results_path / "d2nn_gen_mnist.pt")
 
     plot_phase_masks(model.decoder.layers, results_path / "phase_masks.png")
     plot_generated_digits(model, device, results_path / "generated_digits.png")
