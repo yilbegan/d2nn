@@ -1,7 +1,13 @@
 import datetime
 import pathlib
+import shutil
+from typing import cast
 
 import modal
+
+from d2nn.export.flat import create_flat_mesh
+from d2nn.export.relief import get_relief
+from d2nn.optics.diffractive import DiffractiveLayer
 
 from .types import ClassificationLoss
 
@@ -9,7 +15,7 @@ app = modal.App("d2nn-classification")
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("torch", "torchvision", "matplotlib", "diffusers", "wandb")
+    .pip_install("torch", "torchvision", "matplotlib", "diffusers", "wandb", "trimesh")
     .add_local_python_source("d2nn")
 )
 
@@ -39,7 +45,7 @@ def train(
     import wandb
 
     from d2nn.data import mnist_loaders
-    from d2nn.models import DiffractiveClassifier
+    from d2nn.models import ClassifierConfig, DiffractiveClassifier
     from d2nn.viz import plot_phase_masks
     from d2nn.viz.classification import plot_confusion_matrix, plot_input_output_table
 
@@ -67,7 +73,9 @@ def train(
         root=DATASET_DIR, size=size, batch_size=batch_size
     )
 
-    model = DiffractiveClassifier(size=size, num_layers=num_layers, det_size=size // 10)
+    config = ClassifierConfig(size=size, num_layers=num_layers, det_size=size // 10)
+    model = DiffractiveClassifier(config)
+
     train(
         model,
         train_loader,
@@ -91,7 +99,7 @@ def train(
     results_path = pathlib.Path(TASK_DATA_DIR) / "runs" / run_id
     results_path.mkdir(parents=True)
 
-    torch.save(model.state_dict(), results_path / "d2nn_mnist.pt")
+    model.save(results_path / "d2nn_mnist.pt")
 
     plot_phase_masks(model.stack.layers, results_path / "phase_masks.png")
     plot_input_output_table(
@@ -123,3 +131,48 @@ def train(
         f"  eff(total) {metrics.total_efficiency:.4f}"
     )
     return metrics.accuracy
+
+
+@app.function(
+    image=image,
+    gpu="A10G",
+    volumes={TASK_DATA_DIR: results_volume},
+    timeout=3600,
+)
+def export(
+    run_id: str,
+    base_thickness: float = 0.002,
+    base_padding: float = 0.01,
+    delta_n: float = 0.7227,
+    force: bool = True,
+) -> None:
+    from d2nn.models import DiffractiveClassifier
+
+    results_path = pathlib.Path(TASK_DATA_DIR) / "runs" / run_id
+    if not results_path.exists():
+        raise ValueError(f"Run {run_id} not found")
+
+    model = DiffractiveClassifier.load(results_path / "d2nn_mnist.pt")
+
+    layers_path = results_path / "layers"
+    if layers_path.exists():
+        if not force:
+            raise ValueError("3D-models for this run already generated")
+        shutil.rmtree(layers_path)
+
+    layers_path.mkdir()
+    for i, layer in enumerate(model.stack.layers):
+        layer = cast(DiffractiveLayer, layer)
+        relief = get_relief(layer, delta_n=delta_n)
+
+        mesh = create_flat_mesh(
+            relief=relief,
+            pixel_size=model.config.pixel_size,
+            base_thickness=base_thickness,
+            base_padding=base_padding,
+        )
+
+        mesh.export(layers_path / f"layer_{i:02}.stl")
+
+    results_volume.commit()
+    print(f"created 3d models for {len(model.stack.layers)} layer(s)")

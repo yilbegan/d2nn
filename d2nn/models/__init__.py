@@ -1,8 +1,10 @@
-from .classifier import DiffractiveClassifier
+from .classifier import ClassifierConfig, DiffractiveClassifier
 from .generative import (
+    DecoderConfig,
     DiffractiveDecoder,
     DiffractiveEncoder,
     DiffractiveGenerativeModel,
+    EncoderConfig,
 )
 
 __all__ = [
@@ -10,4 +12,7 @@ __all__ = [
     "DiffractiveDecoder",
     "DiffractiveEncoder",
     "DiffractiveGenerativeModel",
+    "ClassifierConfig",
+    "DecoderConfig",
+    "EncoderConfig",
 ]

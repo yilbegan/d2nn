@@ -47,7 +47,7 @@ def plot_generated_digits(
     output_size: int = 32,
 ) -> None:
     model.eval()
-    noise_size = model.encoder.in_size
+    noise_size = model.encoder.config.in_size
 
     labels = torch.arange(num_classes, device=device).repeat_interleave(
         samples_per_digit
@@ -97,7 +97,7 @@ def decoder_intensities(
     noise: torch.Tensor | None,
 ) -> tuple[list[Frame], list[str]]:
     model.eval()
-    noise_size = model.encoder.in_size
+    noise_size = model.encoder.config.in_size
     if noise is None:
         noise = torch.randn(1, 1, noise_size, noise_size, device=device)
 

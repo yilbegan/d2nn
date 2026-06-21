@@ -83,9 +83,9 @@ def train(
     import torch
 
     from d2nn.models import (
-        DiffractiveDecoder,
-        DiffractiveEncoder,
+        DecoderConfig,
         DiffractiveGenerativeModel,
+        EncoderConfig,
     )
     from d2nn.viz import plot_phase_masks
     from d2nn.viz.generation import plot_decoder_intensity, plot_generated_digits
@@ -103,10 +103,10 @@ def train(
     cache = torch.load(cache_path, map_location="cpu")
     teacher_cache = (cache["noises"], cache["labels"], cache["images"])
 
-    encoder = DiffractiveEncoder(in_size=noise_size)
-    decoder = DiffractiveDecoder()
+    encoder_config = EncoderConfig(in_size=noise_size)
+    decoder_config = DecoderConfig()
 
-    model = DiffractiveGenerativeModel(encoder, decoder)
+    model = DiffractiveGenerativeModel(encoder_config, decoder_config)
 
     train(model, teacher_cache, device, epochs, cache_size, batch_size)
 
