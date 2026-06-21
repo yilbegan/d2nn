@@ -20,10 +20,10 @@ def create_flat_mesh(
     base.apply_translation((0, 0, base_thickness / 2))
     parts.append(base)
 
-    center_x = w * pixel_size / 2
-    center_y = h * pixel_size / 2
+    center_x = -w * pixel_size / 2
+    center_y = -h * pixel_size / 2
 
-    for i, j in np.argwhere(relief > 1e-5):
+    for i, j in np.argwhere(relief > 1e-6):
         height = cast(float, relief[i, j])
         pixel = trimesh.creation.box(extents=(pixel_size, pixel_size, height))
 
