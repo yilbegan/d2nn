@@ -1,5 +1,5 @@
 import pathlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import torch
 import torch.nn as nn
@@ -24,6 +24,8 @@ class DecoderConfig:
     pixel_size: float = 3.6e-5
     distance: float = 0.1
     scale_factor: float = 6.0
+    quantization_levels: int | None = None
+    quantization_steepness: float = 4.0
 
 
 class DiffractiveEncoder(nn.Module):
@@ -77,6 +79,8 @@ class DiffractiveDecoder(nn.Module):
                 c.wavelength,
                 c.distance,
                 c.scale_factor,
+                c.quantization_levels,
+                c.quantization_steepness,
             )
             for _ in range(c.num_layers)
         )
@@ -119,10 +123,25 @@ class DiffractiveGenerativeModel(nn.Module):
         torch.save(checkpoint, path)
 
     @classmethod
-    def load(cls, path: str | pathlib.Path, device: torch.device = torch.device("cpu")):
+    def load(
+        cls,
+        path: str | pathlib.Path,
+        device: torch.device = torch.device("cpu"),
+        *,
+        quantization_levels: int | None = None,
+        quantization_steepness: float | None = None,
+    ):
         checkpoint = torch.load(path, map_location=device, weights_only=True)
         encoder_config = EncoderConfig(**checkpoint["encoder_config"])
         decoder_config = DecoderConfig(**checkpoint["decoder_config"])
+        if quantization_levels is not None:
+            decoder_config = replace(
+                decoder_config, quantization_levels=quantization_levels
+            )
+        if quantization_steepness is not None:
+            decoder_config = replace(
+                decoder_config, quantization_steepness=quantization_steepness
+            )
         model = cls(encoder_config, decoder_config)
         model.load_state_dict(checkpoint["state_dict"])
         return model

@@ -40,6 +40,8 @@ def train(
     size: int = 200,
     num_layers: int = 5,
     loss: str = ClassificationLoss.CROSS_ENTROPY,
+    quantization_levels: int | None = None,
+    quantization_steepness: float = 4.0,
 ) -> float:
     import torch
     import wandb
@@ -66,6 +68,8 @@ def train(
             "size": size,
             "num_layers": num_layers,
             "loss": loss,
+            "quantization_levels": quantization_levels,
+            "quantization_steepness": quantization_steepness,
         },
     )
 
@@ -73,7 +77,13 @@ def train(
         root=DATASET_DIR, size=size, batch_size=batch_size
     )
 
-    config = ClassifierConfig(size=size, num_layers=num_layers, det_size=size // 10)
+    config = ClassifierConfig(
+        size=size,
+        num_layers=num_layers,
+        det_size=size // 10,
+        quantization_levels=quantization_levels,
+        quantization_steepness=quantization_steepness,
+    )
     model = DiffractiveClassifier(config)
 
     train(

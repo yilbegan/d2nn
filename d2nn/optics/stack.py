@@ -14,10 +14,20 @@ class DiffractiveStack(nn.Module):
         distance: float,
         num_layers: int,
         scale_factor: float = 6.0,
+        quantization_levels: int | None = None,
+        quantization_steepness: float = 4.0,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
-            DiffractiveLayer(size, pixel_size, wavelength, distance, scale_factor)
+            DiffractiveLayer(
+                size,
+                pixel_size,
+                wavelength,
+                distance,
+                scale_factor,
+                quantization_levels,
+                quantization_steepness,
+            )
             for _ in range(num_layers)
         )
         self.output_propagation = Propagation(size, pixel_size, wavelength, distance)

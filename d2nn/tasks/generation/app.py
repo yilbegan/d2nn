@@ -79,6 +79,8 @@ def train(
     batch_size: int = 200,
     noise_size: int = 32,
     timesteps: int = 500,
+    quantization_levels: int | None = None,
+    quantization_steepness: float = 4.0,
 ) -> None:
     import torch
 
@@ -104,7 +106,10 @@ def train(
     teacher_cache = (cache["noises"], cache["labels"], cache["images"])
 
     encoder_config = EncoderConfig(in_size=noise_size)
-    decoder_config = DecoderConfig()
+    decoder_config = DecoderConfig(
+        quantization_levels=quantization_levels,
+        quantization_steepness=quantization_steepness,
+    )
 
     model = DiffractiveGenerativeModel(encoder_config, decoder_config)
 
