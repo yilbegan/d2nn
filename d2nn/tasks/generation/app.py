@@ -94,7 +94,7 @@ def train(
 
     from .train import train
 
-    run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_id = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%d_%H-%M-%S")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"training on {device}")
