@@ -1,13 +1,24 @@
 from dataclasses import dataclass
-from typing import Literal, override
-import torch.nn as nn
+from math import isfinite
+from typing import Literal, cast, override
+
 import torch
+import torch.nn as nn
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PhaseConditions:
     quantization_steepness: float
     quantization_mode: Literal["soft", "hard"] = "soft"
+
+    def __post_init__(self) -> None:
+        steepness = cast(object, self.quantization_steepness)
+        if isinstance(steepness, bool) or not isinstance(steepness, int | float):
+            raise TypeError("quantization_steepness must be a number")
+        if not isfinite(steepness) or steepness <= 0:
+            raise ValueError("quantization_steepness must be finite and positive")
+        if self.quantization_mode not in ("soft", "hard"):
+            raise ValueError("quantization_mode must be 'soft' or 'hard'")
 
 
 def _quantize_hard(phase: torch.Tensor, *, levels: int) -> torch.Tensor:
@@ -17,7 +28,9 @@ def _quantize_hard(phase: torch.Tensor, *, levels: int) -> torch.Tensor:
     return hard_indices * step
 
 
-def _quantize_soft(phase: torch.Tensor, *, levels: int, steepness: float) -> torch.Tensor:
+def _quantize_soft(
+    phase: torch.Tensor, *, levels: int, steepness: float
+) -> torch.Tensor:
     step = 2 * torch.pi / levels
     normalized = phase / step
     thresholds = torch.arange(levels, device=phase.device, dtype=phase.dtype) + 0.5
@@ -32,8 +45,8 @@ class Phase(nn.Module):
         self,
         size: int,
         scale_factor: float = 6.0,
-        quantization_levels: int | None = None
-    ):
+        quantization_levels: int | None = None,
+    ) -> None:
         super().__init__()
 
         self.quantization_levels: int | None = quantization_levels

@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from math import isfinite
 from typing import cast, override
 
 import torch
@@ -19,10 +20,23 @@ class DiffractiveLayerConditions:
     phase: PhaseConditions | None = None
 
     def __post_init__(self) -> None:
-        if self.fabrication_error_std < 0:
-            raise ValueError("fabrication_error_std must be non-negative")
-        if self.xy_drift_std < 0:
-            raise ValueError("xy_drift_std must be non-negative")
+        for name, value in (
+            ("fabrication_error_std", self.fabrication_error_std),
+            ("xy_drift_std", self.xy_drift_std),
+        ):
+            value = cast(object, value)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise TypeError(f"{name} must be a number")
+            if not isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        propagation = cast(object, self.propagation)
+        if propagation is not None and not isinstance(
+            propagation, PropagationConditions
+        ):
+            raise TypeError("propagation must be PropagationConditions or None")
+        phase = cast(object, self.phase)
+        if phase is not None and not isinstance(phase, PhaseConditions):
+            raise TypeError("phase must be PhaseConditions or None")
 
 
 class DiffractiveLayer(nn.Module):
