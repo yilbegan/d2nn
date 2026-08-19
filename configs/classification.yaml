@@ -1,0 +1,150 @@
+model:
+  size: 200
+  num_layers: 5
+  num_classes: 10
+
+  wavelength: 0.75e-3
+  refractive_index: 1.7227
+  extinction_coefficient: 0.0311
+  environment_refractive_index: 1.0
+
+  pixel_size: 0.4e-3
+  distance: 0.03
+  base_thickness: 0.5e-3
+  det_size: 12
+  scale_factor: 6.0
+  quantization_levels: 16
+
+training:
+  epochs: 17
+  batch_size: 500
+  num_workers: 4
+  loss: cross_entropy
+
+schedule:
+  learning_rate:
+    kind: cosine
+    start: 0.01
+    stop: 0.001
+  conditions:
+    kind: piecewise
+    phases:
+      - at: 0.0
+        schedule:
+          kind: const
+          value: null
+
+      - at: 0.29411764705882354 # 5 / 17
+        schedule:
+          kind: struct
+          name: DiffractiveStackConditions
+          values:
+            layers:
+              kind: struct
+              name: DiffractiveLayerConditions
+              values:
+                fabrication_error_std:
+                  kind: linear
+                  start: 0.0
+                  stop: 0.05e-3
+                xy_drift_std:
+                  kind: linear
+                  start: 0.0
+                  stop: 0.1e-3
+                propagation:
+                  kind: struct
+                  name: PropagationConditions
+                  values:
+                    distance_std:
+                      kind: linear
+                      start: 0.0
+                      stop: 0.1e-3
+            output_propagation:
+              kind: struct
+              name: PropagationConditions
+              values:
+                distance_std:
+                  kind: linear
+                  start: 0.0
+                  stop: 0.1e-3
+
+      - at: 0.5882352941176471 # 10 / 17
+        schedule:
+          kind: struct
+          name: DiffractiveStackConditions
+          values:
+            layers:
+              kind: struct
+              name: DiffractiveLayerConditions
+              values:
+                fabrication_error_std:
+                  kind: const
+                  value: 0.05e-3
+                xy_drift_std:
+                  kind: const
+                  value: 0.1e-3
+                phase:
+                  kind: struct
+                  name: PhaseConditions
+                  values:
+                    quantization_steepness:
+                      kind: linear
+                      start: 4.0
+                      stop: 40.0
+                    quantization_mode:
+                      kind: const
+                      value: soft
+                propagation:
+                  kind: struct
+                  name: PropagationConditions
+                  values:
+                    distance_std:
+                      kind: const
+                      value: 0.1e-3
+            output_propagation:
+              kind: struct
+              name: PropagationConditions
+              values:
+                distance_std:
+                  kind: const
+                  value: 0.1e-3
+
+      - at: 0.8823529411764706 # 15 / 17
+        schedule:
+          kind: struct
+          name: DiffractiveStackConditions
+          values:
+            layers:
+              kind: struct
+              name: DiffractiveLayerConditions
+              values:
+                fabrication_error_std:
+                  kind: const
+                  value: 0.05e-3
+                xy_drift_std:
+                  kind: const
+                  value: 0.1e-3
+                phase:
+                  kind: struct
+                  name: PhaseConditions
+                  values:
+                    quantization_steepness:
+                      kind: const
+                      value: 40.0
+                    quantization_mode:
+                      kind: const
+                      value: hard
+                propagation:
+                  kind: struct
+                  name: PropagationConditions
+                  values:
+                    distance_std:
+                      kind: const
+                      value: 0.1e-3
+            output_propagation:
+              kind: struct
+              name: PropagationConditions
+              values:
+                distance_std:
+                  kind: const
+                  value: 0.1e-3

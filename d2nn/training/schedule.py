@@ -3,17 +3,19 @@ from bisect import bisect_right
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from math import cos, isfinite, pi
-from typing import ClassVar, Protocol, Self, final, override
+from typing import ClassVar, Protocol, Self, cast, final, override
 
 __all__ = [
     "At",
     "Const",
     "Cosine",
+    "from_dict",
     "Linear",
     "Piecewise",
     "Resolver",
     "Schedule",
     "Struct",
+    "StructRegistry",
 ]
 
 
@@ -37,8 +39,7 @@ class Schedule[T](ABC):
         return self.at(progress)
 
     @abstractmethod
-    def _at(self, progress: float, /) -> T:
-        ...
+    def _at(self, progress: float, /) -> T: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,9 +122,7 @@ class Piecewise[T](Schedule[T]):
         start = self._starts[index]
         stop = self._starts[index + 1] if index + 1 < len(self._starts) else 1.0
 
-        local_progress = (
-            0.0 if stop == start else (progress - start) / (stop - start)
-        )
+        local_progress = 0.0 if stop == start else (progress - start) / (stop - start)
         return self._entries[index][1].at(local_progress)
 
 
@@ -151,3 +150,124 @@ class Struct[T](Schedule[T]):
     @override
     def _at(self, progress: float, /) -> T:
         return self._build(_Resolver(progress))
+
+
+type StructRegistry = Mapping[str, Callable[..., object]]
+
+
+def _number(config: Mapping[str, object], key: str) -> float:
+    try:
+        value = config[key]
+    except KeyError:
+        raise ValueError(
+            f"missing {key!r} for {config.get('kind')!r} schedule"
+        ) from None
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"{key!r} must be a number, got {value!r}")
+    return float(value)
+
+
+def _phase_start(value: object) -> At:
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.endswith("%"):
+            raise ValueError(f"phase 'at' must be a percentage, got {value!r}")
+        try:
+            return At.percent(float(value[:-1]))
+        except ValueError as error:
+            raise ValueError(f"invalid phase 'at' value {value!r}") from error
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(
+            f"phase 'at' must be a percentage or progress number, got {value!r}"
+        )
+    return At(float(value))
+
+
+def _struct(config: Mapping[str, object], registry: StructRegistry) -> Struct[object]:
+    name = config.get("name")
+    if not isinstance(name, str):
+        raise TypeError(f"struct 'name' must be a string, got {name!r}")
+
+    try:
+        factory = registry[name]
+    except KeyError:
+        raise ValueError(f"unknown struct {name!r}") from None
+
+    values = config.get("values")
+    if not isinstance(values, Mapping):
+        raise TypeError(f"struct 'values' must be a mapping, got {values!r}")
+    values = cast(Mapping[object, object], values)
+
+    fields: dict[str, Schedule[object]] = {}
+    for field, value in values.items():
+        if not isinstance(field, str):
+            raise TypeError(f"struct field names must be strings, got {field!r}")
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                f"schedule for struct field {field!r} must be a mapping, got {value!r}"
+            )
+        fields[field] = from_dict(cast(Mapping[str, object], value), registry)
+
+    def build(resolve: Resolver) -> object:
+        return factory(
+            **{field: resolve(schedule) for field, schedule in fields.items()}
+        )
+
+    return Struct(build)
+
+
+def _piecewise(
+    config: Mapping[str, object], registry: StructRegistry
+) -> Piecewise[object]:
+    phases = config.get("phases")
+    if not isinstance(phases, list):
+        raise TypeError(f"piecewise 'phases' must be a list, got {phases!r}")
+    phases = cast(list[object], phases)
+
+    loaded: dict[At, Schedule[object]] = {}
+    for index, phase in enumerate(phases):
+        if not isinstance(phase, Mapping):
+            raise TypeError(f"piecewise phase {index} must be a mapping, got {phase!r}")
+        phase = cast(Mapping[str, object], phase)
+        if "at" not in phase:
+            raise ValueError(f"piecewise phase {index} is missing 'at'")
+        if "schedule" not in phase:
+            raise ValueError(f"piecewise phase {index} is missing 'schedule'")
+
+        at = _phase_start(phase["at"])
+        if at in loaded:
+            raise ValueError(f"duplicate piecewise phase at {phase['at']!r}")
+
+        schedule = phase["schedule"]
+        if not isinstance(schedule, Mapping):
+            message = f"schedule for piecewise phase {index} must be a mapping"
+            raise TypeError(f"{message}, got {schedule!r}")
+        loaded[at] = from_dict(cast(Mapping[str, object], schedule), registry)
+
+    return Piecewise(loaded)
+
+
+def from_dict(
+    config: Mapping[str, object],
+    registry: StructRegistry | None = None,
+) -> Schedule[object]:
+    kind = config.get("kind")
+    structs = registry or {}
+
+    match kind:
+        case "const":
+            if "value" not in config:
+                raise ValueError("missing 'value' for 'const' schedule")
+            return Const(config["value"])
+        case "linear":
+            return Linear(_number(config, "start"), _number(config, "stop"))
+        case "cosine":
+            return Cosine(_number(config, "start"), _number(config, "stop"))
+        case "piecewise":
+            return _piecewise(config, structs)
+        case "struct":
+            return _struct(config, structs)
+        case _:
+            raise ValueError(f"unknown schedule kind {kind!r}")

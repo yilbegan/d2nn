@@ -1,9 +1,3 @@
-from .models import (
-    DiffractiveClassifier,
-    DiffractiveDecoder,
-    DiffractiveEncoder,
-    DiffractiveGenerativeModel,
-)
 from .optics import (
     Detector,
     DiffractiveLayer,
@@ -14,10 +8,6 @@ from .optics import (
 )
 
 __all__ = [
-    "DiffractiveClassifier",
-    "DiffractiveDecoder",
-    "DiffractiveEncoder",
-    "DiffractiveGenerativeModel",
     "DiffractiveLayer",
     "DiffractiveStack",
     "Detector",

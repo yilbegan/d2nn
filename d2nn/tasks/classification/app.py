@@ -1,21 +1,14 @@
-import datetime
 import pathlib
 import shutil
 from typing import cast
 
 import modal
 
-from d2nn.export.flat import create_flat_mesh
-from d2nn.export.relief import get_relief
-from d2nn.optics.diffractive import DiffractiveLayer
-
-from .types import ClassificationLoss
-
 app = modal.App("d2nn-classification")
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("torch", "torchvision", "matplotlib", "diffusers", "wandb", "trimesh")
+    .pip_install("torch", "torchvision", "matplotlib", "wandb", "trimesh", "pyyaml")
     .add_local_python_source("d2nn")
 )
 
@@ -26,124 +19,36 @@ DATASET_DIR = "/dataset"
 TASK_DATA_DIR = "/task_data"
 
 
-@app.function(
+@app.function(  # pyright: ignore[reportUnknownMemberType]
     image=image,
     gpu="A100",
     volumes={DATASET_DIR: data_volume, TASK_DATA_DIR: results_volume},
     secrets=[modal.Secret.from_name("wandb")],
     timeout=3600,
 )
-def train(
-    epochs: int = 5,
-    lr: float = 1e-2,
-    batch_size: int = 500,
-    size: int = 200,
-    num_layers: int = 5,
-    loss: str = ClassificationLoss.CROSS_ENTROPY,
-    quantization_levels: int | None = None,
-    quantization_steepness: float = 4.0,
-) -> float:
-    import torch
-    import wandb
+def _train(config_yaml: str) -> float:
+    from .runner import run_classification
 
-    from d2nn.data import mnist_loaders
-    from d2nn.models import ClassifierConfig, DiffractiveClassifier
-    from d2nn.viz import plot_phase_masks
-    from d2nn.viz.classification import plot_confusion_matrix, plot_input_output_table
-
-    from .train import evaluate, train
-
-    run_id = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%d_%H-%M-%S")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"training on {device}")
-
-    run = wandb.init(
-        project="d2nn-classification",
-        name=run_id,
-        config={
-            "epochs": epochs,
-            "lr": lr,
-            "batch_size": batch_size,
-            "size": size,
-            "num_layers": num_layers,
-            "loss": loss,
-            "quantization_levels": quantization_levels,
-            "quantization_steepness": quantization_steepness,
-        },
-    )
-
-    train_loader, test_loader = mnist_loaders(
-        root=DATASET_DIR, size=size, batch_size=batch_size
-    )
-
-    config = ClassifierConfig(
-        size=size,
-        num_layers=num_layers,
-        det_size=size // 10,
-        quantization_levels=quantization_levels,
-        quantization_steepness=quantization_steepness,
-    )
-    model = DiffractiveClassifier(config)
-
-    train(
-        model,
-        train_loader,
-        test_loader,
-        device,
-        epochs=epochs,
-        lr=lr,
-        loss=ClassificationLoss(loss),
-        on_epoch=lambda epoch, avg_loss, metrics: run.log(
-            {
-                "train_loss": avg_loss,
-                "test_accuracy": metrics.accuracy,
-                "correct_efficiency": metrics.correct_efficiency,
-                "total_efficiency": metrics.total_efficiency,
-            },
-            step=epoch,
-        ),
-    )
-    metrics = evaluate(model, test_loader, device)
-
-    results_path = pathlib.Path(TASK_DATA_DIR) / "runs" / run_id
-    results_path.mkdir(parents=True)
-
-    model.save(results_path / "d2nn_mnist.pt")
-
-    plot_phase_masks(model.stack.layers, results_path / "phase_masks.png")
-    plot_input_output_table(
-        model, test_loader, device, results_path / "input_output_table.png"
-    )
-    plot_confusion_matrix(
-        model, test_loader, device, results_path / "confusion_matrix.png"
-    )
-
-    run.summary["final_test_accuracy"] = metrics.accuracy
-    run.summary["final_correct_efficiency"] = metrics.correct_efficiency
-    run.summary["final_total_efficiency"] = metrics.total_efficiency
-    run.log(
-        {
-            "phase_masks": wandb.Image(str(results_path / "phase_masks.png")),
-            "input_output_table": wandb.Image(
-                str(results_path / "input_output_table.png")
-            ),
-            "confusion_matrix": wandb.Image(str(results_path / "confusion_matrix.png")),
-        }
-    )
-    run.finish()
-
+    accuracy = run_classification(config_yaml, DATASET_DIR, TASK_DATA_DIR)
     data_volume.commit()
     results_volume.commit()
-    print(
-        f"final test accuracy {metrics.accuracy:.4f}"
-        f"  eff(correct) {metrics.correct_efficiency:.4f}"
-        f"  eff(total) {metrics.total_efficiency:.4f}"
-    )
-    return metrics.accuracy
+    return accuracy
 
 
-@app.function(
+@app.local_entrypoint(name="train")
+def train(config: str) -> None:
+    """Validate a local YAML file and submit it to the GPU training function."""
+
+    from .config import load_config
+
+    config_path = pathlib.Path(config)
+    _ = load_config(config_path)
+    config_yaml = config_path.read_text(encoding="utf-8")
+    accuracy = _train.remote(config_yaml)
+    print(f"training completed with accuracy {accuracy:.4f}")
+
+
+@app.function(  # pyright: ignore[reportUnknownMemberType]
     image=image,
     gpu="A10G",
     volumes={TASK_DATA_DIR: results_volume},
@@ -151,18 +56,22 @@ def train(
 )
 def export(
     run_id: str,
-    base_thickness: float = 0.002,
+    base_thickness: float = 0.5e-3,
     base_padding: float = 0.01,
     delta_n: float = 0.7227,
     force: bool = True,
 ) -> None:
-    from d2nn.models import DiffractiveClassifier
+    from d2nn.export.flat import create_flat_mesh
+    from d2nn.export.relief import get_relief
+    from d2nn.models.classifier import DiffractiveClassifier
+    from d2nn.optics.diffractive import DiffractiveLayer
 
     results_path = pathlib.Path(TASK_DATA_DIR) / "runs" / run_id
     if not results_path.exists():
         raise ValueError(f"Run {run_id} not found")
 
     model = DiffractiveClassifier.load(results_path / "d2nn_mnist.pt")
+    _ = model.eval()
 
     layers_path = results_path / "layers"
     if layers_path.exists():
@@ -182,7 +91,12 @@ def export(
             base_padding=base_padding,
         )
 
-        mesh.export(layers_path / f"layer_{i:02}.stl")
+        _ = cast(
+            object,
+            mesh.export(  # pyright: ignore[reportUnknownMemberType]
+                layers_path / f"layer_{i:02}.stl"
+            ),
+        )
 
     results_volume.commit()
     print(f"created 3d models for {len(model.stack.layers)} layer(s)")

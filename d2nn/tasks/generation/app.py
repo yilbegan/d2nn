@@ -89,6 +89,9 @@ def train(
         DiffractiveGenerativeModel,
         EncoderConfig,
     )
+    from d2nn.optics.diffractive import DiffractiveLayerConditions
+    from d2nn.optics.phase import PhaseConditions
+    from d2nn.optics.stack import DiffractiveStackConditions
     from d2nn.viz import plot_phase_masks
     from d2nn.viz.generation import plot_decoder_intensity, plot_generated_digits
 
@@ -106,12 +109,20 @@ def train(
     teacher_cache = (cache["noises"], cache["labels"], cache["images"])
 
     encoder_config = EncoderConfig(in_size=noise_size)
-    decoder_config = DecoderConfig(
-        quantization_levels=quantization_levels,
-        quantization_steepness=quantization_steepness,
-    )
+    decoder_config = DecoderConfig(quantization_levels=quantization_levels)
 
     model = DiffractiveGenerativeModel(encoder_config, decoder_config)
+    if quantization_levels is not None:
+        model.set_conditions(
+            DiffractiveStackConditions(
+                layers=DiffractiveLayerConditions(
+                    phase=PhaseConditions(
+                        quantization_steepness=quantization_steepness,
+                        quantization_mode="hard",
+                    )
+                )
+            )
+        )
 
     train(model, teacher_cache, device, epochs, cache_size, batch_size)
 
@@ -120,7 +131,7 @@ def train(
 
     model.save(results_path / "d2nn_gen_mnist.pt")
 
-    plot_phase_masks(model.decoder.layers, results_path / "phase_masks.png")
+    plot_phase_masks(model.decoder.stack.layers, results_path / "phase_masks.png")
     plot_generated_digits(model, device, results_path / "generated_digits.png")
 
     plot_decoder_intensity(
