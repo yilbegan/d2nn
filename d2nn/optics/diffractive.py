@@ -1,7 +1,28 @@
+import math
+from dataclasses import dataclass
+from typing import cast, override
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from .propagation import Propagation
+from d2nn.optics.parameters import PhysicalParameters
+from d2nn.optics.phase import Phase, PhaseConditions
+from d2nn.optics.propagation import Propagation, PropagationConditions
+
+
+@dataclass(frozen=True, slots=True)
+class DiffractiveLayerConditions:
+    fabrication_error_std: float = 0.0
+    xy_drift_std: float = 0.0
+    propagation: PropagationConditions | None = None
+    phase: PhaseConditions | None = None
+
+    def __post_init__(self) -> None:
+        if self.fabrication_error_std < 0:
+            raise ValueError("fabrication_error_std must be non-negative")
+        if self.xy_drift_std < 0:
+            raise ValueError("xy_drift_std must be non-negative")
 
 
 class DiffractiveLayer(nn.Module):
@@ -9,48 +30,98 @@ class DiffractiveLayer(nn.Module):
         self,
         size: int,
         pixel_size: float,
-        wavelength: float,
         distance: float,
+        physical_parameters: PhysicalParameters,
+        base_thickness: float = 0,
         scale_factor: float = 6.0,
         quantization_levels: int | None = None,
-        quantization_steepness: float = 4.0,
     ) -> None:
         super().__init__()
-        if quantization_levels is not None and quantization_levels < 2:
-            raise ValueError("quantization_levels must be at least 2")
-        if quantization_steepness <= 0:
-            raise ValueError("quantization_steepness must be positive")
 
-        self.propagation = Propagation(size, pixel_size, wavelength, distance)
-        self.scale_factor = scale_factor
-        self.wavelength = wavelength
-        self.quantization_levels = quantization_levels
-        self.quantization_steepness = quantization_steepness
-        self.phase = nn.Parameter(torch.zeros(size, size))
+        self.size: int = size
+        self.pixel_size: float = pixel_size
+        self.base_thickness: float = base_thickness
+        self.physical_parameters: PhysicalParameters = physical_parameters
+        self.conditions: DiffractiveLayerConditions | None = None
+        self.phase: Phase = Phase(size, scale_factor, quantization_levels)
+        self.propagation: Propagation = Propagation(
+            size, pixel_size, physical_parameters.wavelength, distance
+        )
 
-    def effective_phase(self) -> torch.Tensor:
-        phase = self.scale_factor * self.phase
-        levels = self.quantization_levels
-        if levels is None:
-            return phase
+    def set_conditions(self, conditions: DiffractiveLayerConditions | None) -> None:
+        self.conditions = conditions
 
-        step = 2 * torch.pi / levels
-        normalized = torch.remainder(phase, 2 * torch.pi) / step
+        if conditions is None:
+            self.phase.set_conditions(None)
+            self.propagation.set_conditions(None)
+        else:
+            self.phase.set_conditions(conditions.phase)
+            self.propagation.set_conditions(conditions.propagation)
 
-        hard_indices = torch.remainder(torch.floor(normalized + 0.5), levels)
-        hard_phase = hard_indices * step
-
-        if not self.is_training and not torch.is_grad_enabled():
-            return hard_phase
-
-        thresholds = torch.arange(levels, device=phase.device, dtype=phase.dtype) + 0.5
-        soft_indices = torch.sigmoid(
-            self.quantization_steepness * (normalized.unsqueeze(-1) - thresholds)
-        ).sum(dim=-1)
-        soft_phase = soft_indices * step
-
-        return soft_phase + (hard_phase - soft_phase).detach()
-
+    @override
     def forward(self, field: torch.Tensor) -> torch.Tensor:
-        field = self.propagation(field)
-        return field * torch.exp(1j * self.effective_phase())
+        field = cast(torch.Tensor, self.propagation(field))
+        phase = cast(torch.Tensor, self.phase())
+        thickness = self._realized_thickness(phase)
+        return field * self._transmission(thickness)
+
+    def _realized_thickness(self, phase: torch.Tensor) -> torch.Tensor:
+        thickness = self._thickness(phase)
+        conditions = self.conditions
+
+        if conditions is None:
+            return thickness
+
+        if conditions.fabrication_error_std > 0:
+            error = torch.randn_like(thickness) * conditions.fabrication_error_std
+            thickness = thickness + error
+
+        if conditions.xy_drift_std > 0:
+            drift_xy = (
+                torch.randn(2, device=thickness.device, dtype=thickness.dtype)
+                * conditions.xy_drift_std
+            )
+            thickness = self._shift_thickness(thickness, drift_xy)
+
+        return thickness
+
+    def _shift_thickness(
+        self, thickness: torch.Tensor, drift_xy: torch.Tensor
+    ) -> torch.Tensor:
+        height, width = thickness.shape
+        scale = thickness.new_tensor(
+            (width * self.pixel_size, height * self.pixel_size)
+        )
+
+        transform = torch.eye(2, 3, device=thickness.device, dtype=thickness.dtype)
+        transform[:, 2] = -2 * drift_xy / scale
+        grid = F.affine_grid(
+            transform.unsqueeze(0),
+            size=[1, 1, height, width],
+            align_corners=False,
+        )
+
+        relief = (thickness - self.base_thickness)[None, None]
+        shifted = F.grid_sample(
+            relief,
+            grid,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        return shifted[0, 0] + self.base_thickness
+
+    def _transmission(self, thickness: torch.Tensor) -> torch.Tensor:
+        parameters = self.physical_parameters
+        phase = thickness / parameters.thickness_per_radian
+        attenuation = torch.exp(
+            -math.tau
+            * parameters.extinction_coefficient
+            * thickness
+            / parameters.wavelength
+        )
+        return attenuation * torch.exp(1j * phase)
+
+    def _thickness(self, phase: torch.Tensor) -> torch.Tensor:
+        modulation_thickness = phase * self.physical_parameters.thickness_per_radian
+        return self.base_thickness + modulation_thickness

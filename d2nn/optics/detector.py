@@ -1,4 +1,5 @@
 import math
+from typing import override
 
 import torch
 import torch.nn as nn
@@ -47,9 +48,10 @@ class Detector(nn.Module):
         rows: list[int] | None = None,
     ) -> None:
         super().__init__()
-        self.num_points = det_size**2
+        self.num_points: int = det_size**2
         self.register_buffer("masks", detector_masks(size, num_classes, det_size, rows))
 
+    @override
     def forward(self, field: torch.Tensor) -> torch.Tensor:
         intensity = field.abs() ** 2  # (B, H, W)
         return torch.einsum("bhw,chw->bc", intensity, self.masks)
