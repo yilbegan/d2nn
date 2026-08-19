@@ -1,0 +1,47 @@
+model:
+  encoder:
+    in_size: 32
+    out_size: 200
+    num_layers: 3
+    num_classes: 10
+    class_embedding_size: 32
+
+  decoder:
+    size: 200
+    num_layers: 3
+
+    wavelength: 5.32e-7
+    refractive_index: 1.5
+    extinction_coefficient: 0.0
+    environment_refractive_index: 1.0
+
+    pixel_size: 3.6e-5
+    distance: 0.1
+    base_thickness: 0.0
+    scale_factor: 6.0
+    quantization_levels: 16
+
+cache:
+  size: 10000
+  sampling_steps: 500
+
+training:
+  epochs: 10
+  batch_size: 200
+  histogram_bins: 64
+  histogram_weight: 1.0e-4
+
+schedule:
+  encoder_learning_rate:
+    kind: cosine
+    start: 1.0e-4
+    stop: 1.0e-5
+
+  decoder_learning_rate:
+    kind: cosine
+    start: 2.0e-3
+    stop: 2.0e-4
+
+  conditions:
+    kind: const
+    value: null

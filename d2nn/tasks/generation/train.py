@@ -1,142 +1,191 @@
+from math import ceil, isfinite
+from typing import cast
+
 import torch
-import torch.nn as nn
-from diffusers.models.unets.unet_2d import UNet2DModel
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from torch.optim.lr_scheduler import CosineAnnealingLR
+import torch.nn.functional as F
 
 from d2nn.models.generative import DiffractiveGenerativeModel
+from d2nn.training.schedule import Schedule
 
-from .teacher import sample_teacher
+from .config import TrainingConfig
+from .types import EpochCallback, EpochResult, TeacherCache, TrainingParameters
+
+__all__ = [
+    "criterion",
+    "histogram_kl_loss",
+    "soft_histogram",
+    "train",
+]
 
 
 def soft_histogram(
-    x: torch.Tensor,
+    values: torch.Tensor,
     num_bins: int = 64,
     start: float = -1.0,
     end: float = 1.0,
     sigma: float | None = None,
-    eps: float = 1e-8,
+    eps: float = 1.0e-8,
 ) -> torch.Tensor:
-    x = (2 * x - 1).reshape(-1)
-    centers = torch.linspace(start, end, num_bins, device=x.device)
+    if num_bins < 2:
+        raise ValueError("num_bins must be at least 2")
+    if not isfinite(start) or not isfinite(end) or start >= end:
+        raise ValueError("histogram bounds must be finite and increasing")
+    if not isfinite(eps) or eps <= 0:
+        raise ValueError("eps must be finite and positive")
     if sigma is None:
         sigma = (end - start) / num_bins
+    if not isfinite(sigma) or sigma <= 0:
+        raise ValueError("sigma must be finite and positive")
 
-    d = x.unsqueeze(1) - centers.unsqueeze(0)
-    w = torch.exp(-0.5 * (d / sigma) ** 2)
-    hist = w.sum(dim=0)
-    hist = hist / (hist.sum() + eps)
-    return hist
+    normalized = (2 * values - 1).reshape(-1)
+    centers = torch.linspace(
+        start,
+        end,
+        num_bins,
+        device=normalized.device,
+        dtype=normalized.dtype,
+    )
+    distances = normalized.unsqueeze(1) - centers.unsqueeze(0)
+    weights = torch.exp(-0.5 * (distances / sigma).square())
+    histogram = weights.sum(dim=0)
+    return histogram / (histogram.sum() + eps)
 
 
 def histogram_kl_loss(
-    o_model: torch.Tensor,
-    o_teacher: torch.Tensor,
+    model_output: torch.Tensor,
+    teacher_output: torch.Tensor,
     num_bins: int = 64,
-    eps: float = 1e-8,
+    eps: float = 1.0e-8,
 ) -> torch.Tensor:
-    p_model = soft_histogram(o_model, num_bins=num_bins).clamp_min(eps)
-    p_teacher = soft_histogram(o_teacher, num_bins=num_bins).clamp_min(eps)
-
-    return torch.nn.functional.kl_div(p_model.log(), p_teacher, reduction="sum")
+    model_histogram = soft_histogram(
+        model_output, num_bins=num_bins, eps=eps
+    ).clamp_min(eps)
+    teacher_histogram = soft_histogram(
+        teacher_output, num_bins=num_bins, eps=eps
+    ).clamp_min(eps)
+    return F.kl_div(model_histogram.log(), teacher_histogram, reduction="sum")
 
 
 def criterion(
-    o_model: torch.Tensor,
-    o_teacher: torch.Tensor,
+    model_output: torch.Tensor,
+    teacher_output: torch.Tensor,
     scale: torch.Tensor,
-    gamma: float = 1e-4,
+    gamma: float = 1.0e-4,
+    *,
+    num_bins: int = 64,
 ) -> torch.Tensor:
-    scale = scale.view(-1, 1, 1)
-    mse = torch.nn.functional.mse_loss(scale * o_model, o_teacher)
-    kl = histogram_kl_loss(o_model, o_teacher)
+    if not isfinite(gamma) or gamma < 0:
+        raise ValueError("gamma must be finite and non-negative")
+    if model_output.shape != teacher_output.shape:
+        raise ValueError("model and teacher outputs must have the same shape")
+    if scale.ndim != 1 or scale.shape[0] != model_output.shape[0]:
+        raise ValueError("scale must have shape (batch_size,)")
 
+    scaled = scale.view(-1, 1, 1) * model_output
+    mse = F.mse_loss(scaled, teacher_output)
+    kl = histogram_kl_loss(model_output, teacher_output, num_bins=num_bins)
     return mse + gamma * kl
 
 
-@torch.no_grad()
-def build_teacher_cache(
-    teacher: UNet2DModel,
-    scheduler: DDPMScheduler,
-    device: torch.device,
-    cache_size: int,
-    noise_size: int,
-    batch_size: int = 200,
-    timesteps: int = 500,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    teacher.to(device).eval()  # pyright: ignore[reportArgumentType]
-
-    noises: list[torch.Tensor] = []
-    labels: list[torch.Tensor] = []
-    images: list[torch.Tensor] = []
-
-    generated = 0
-    while generated < cache_size:
-        n = min(batch_size, cache_size - generated)
-        batch_labels = torch.randint(0, 10, (n,), device=device)
-        batch_noise = torch.randn(n, 1, noise_size, noise_size, device=device)
-
-        o_teacher = sample_teacher(
-            teacher, scheduler, batch_noise, batch_labels, timesteps=timesteps
-        )
-
-        noises.append(batch_noise.cpu())
-        labels.append(batch_labels.cpu())
-        images.append(o_teacher.squeeze(1).cpu())
-
-        generated += n
-        print(f"teacher cache {generated}/{cache_size}")
-
-    return torch.cat(noises), torch.cat(labels), torch.cat(images)
+def _set_learning_rates(
+    optimizer: torch.optim.Optimizer,
+    parameters: TrainingParameters,
+) -> None:
+    encoder_group, decoder_group = optimizer.param_groups
+    encoder_group["lr"] = parameters.encoder_learning_rate
+    decoder_group["lr"] = parameters.decoder_learning_rate
 
 
 def train(
     model: DiffractiveGenerativeModel,
-    teacher_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    cache: TeacherCache,
     device: torch.device,
-    epochs: int = 10,
-    cache_size: int = 10000,
-    batch_size: int = 200,
-    lr_encoder: float = 1e-4,
-    lr_decoder: float = 2e-3,
+    config: TrainingConfig,
+    schedule: Schedule[TrainingParameters],
+    on_epoch: EpochCallback | None = None,
 ) -> DiffractiveGenerativeModel:
-    model.to(device)
-    cache_noise, cache_labels, cache_images = teacher_cache
-    loss_size = cache_images.shape[1]
-
+    cache.validate_for(
+        noise_size=model.encoder.config.in_size,
+        num_classes=model.encoder.config.num_classes,
+    )
+    _ = model.to(device)
+    initial_parameters = schedule.at(0.0)
     optimizer = torch.optim.AdamW(
         [
-            {"params": model.encoder.parameters(), "lr": lr_encoder},
-            {"params": model.decoder.parameters(), "lr": lr_decoder},
+            {
+                "params": model.encoder.parameters(),
+                "lr": initial_parameters.encoder_learning_rate,
+            },
+            {
+                "params": model.decoder.parameters(),
+                "lr": initial_parameters.decoder_learning_rate,
+            },
         ]
     )
 
-    lr_scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
-    steps_per_epoch = cache_size // batch_size
+    steps_per_epoch = ceil(cache.size / config.batch_size)
+    total_steps = config.epochs * steps_per_epoch
+    final_step = max(total_steps - 1, 1)
+    global_step = 0
+    parameters = initial_parameters
+    output_size = (cache.images.shape[-2], cache.images.shape[-1])
 
-    for epoch in range(1, epochs + 1):
-        model.train()
-        perm = torch.randperm(cache_size)
-        running_loss = 0.0
-        for step in range(steps_per_epoch):
-            idx = perm[step * batch_size : (step + 1) * batch_size]
-            noise = cache_noise[idx].to(device)
-            labels = cache_labels[idx].to(device)
-            o_teacher = cache_images[idx].to(device)
+    try:
+        for epoch in range(1, config.epochs + 1):
+            _ = model.train()
+            permutation = torch.randperm(cache.size)
+            running_loss = 0.0
 
-            o_model, scale = model(noise, labels)
-            o_model = nn.functional.adaptive_avg_pool2d(
-                o_model.unsqueeze(1), output_size=loss_size
-            ).squeeze(1)
+            for start in range(0, cache.size, config.batch_size):
+                progress = global_step / final_step
+                parameters = (
+                    initial_parameters if global_step == 0 else schedule.at(progress)
+                )
+                _set_learning_rates(optimizer, parameters)
+                model.set_conditions(parameters.conditions)
 
-            optimizer.zero_grad()
-            loss = criterion(o_model, o_teacher, scale)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
+                indices = permutation[start : start + config.batch_size]
+                noise = cache.noises[indices].to(device)
+                labels = cache.labels[indices].to(device)
+                teacher_output = cache.images[indices].to(device)
 
-        lr_scheduler.step()
-        avg_loss = running_loss / steps_per_epoch
-        print(f"epoch {epoch:2d}  loss {avg_loss:.4f}")
+                model_output, scale = cast(
+                    tuple[torch.Tensor, torch.Tensor], model(noise, labels)
+                )
+                model_output = F.adaptive_avg_pool2d(
+                    model_output.unsqueeze(1), output_size=output_size
+                ).squeeze(1)
+
+                optimizer.zero_grad(set_to_none=True)
+                loss = criterion(
+                    model_output,
+                    teacher_output,
+                    scale,
+                    gamma=config.histogram_weight,
+                    num_bins=config.histogram_bins,
+                )
+                _ = cast(
+                    object,
+                    loss.backward(),  # pyright: ignore[reportUnknownMemberType]
+                )
+                _ = cast(
+                    object,
+                    optimizer.step(),  # pyright: ignore[reportUnknownMemberType]
+                )
+                running_loss += loss.item()
+                global_step += 1
+
+            average_loss = running_loss / steps_per_epoch
+            print(f"epoch {epoch:2d}  loss {average_loss:.4f}")
+            if on_epoch is not None:
+                on_epoch(
+                    EpochResult(
+                        epoch=epoch,
+                        loss=average_loss,
+                        parameters=parameters,
+                    )
+                )
+    finally:
+        model.set_conditions(None)
 
     return model
