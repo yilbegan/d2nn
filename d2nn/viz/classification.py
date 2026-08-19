@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ..data import Batch
-from ..models import DiffractiveClassifier
+from ..models.classifier import DiffractiveClassifier
 
 DOWNSCALE = 5
 

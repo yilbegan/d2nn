@@ -1,5 +1,6 @@
 import math
 import pathlib
+from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,7 +8,8 @@ import torch
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.artist import Artist
 
-from ..models import DiffractiveGenerativeModel
+from ..models.generative import DiffractiveGenerativeModel
+from ..optics import DiffractiveLayer
 
 type Frame = np.ndarray[tuple[int, int], np.dtype[np.float32]]
 
@@ -106,13 +108,14 @@ def decoder_intensities(
 
     intensities: list[Frame] = []
     titles: list[str] = []
-    decoder = model.decoder
-    for idx, layer in enumerate(decoder.layers):
+    stack = model.decoder.stack
+    for idx, module in enumerate(stack.layers):
+        layer = cast(DiffractiveLayer, module)
         field = layer(field)
         intensities.append(intensity_frame(field))
         titles.append(f"layer {idx + 1}")
 
-    field = decoder.output_propagation(field)
+    field = stack.output_propagation(field)
     intensities.append(intensity_frame(field))
     titles.append("output plane")
 

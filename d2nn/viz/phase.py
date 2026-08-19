@@ -5,6 +5,7 @@ from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 import torch.nn as nn
 
 from ..optics import DiffractiveLayer
@@ -19,7 +20,7 @@ def plot_phase_masks(modules: Iterable[nn.Module], path: pathlib.Path | str) -> 
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False)
     for idx, layer in enumerate(layers):
         ax = axes[idx // cols][idx % cols]
-        phase = layer.effective_phase().detach().cpu().numpy()
+        phase = cast(torch.Tensor, layer.phase()).detach().cpu().numpy()
         wrapped = np.mod(phase, 2 * np.pi)
         im = ax.imshow(wrapped, cmap="twilight", vmin=0, vmax=2 * np.pi)
         ax.set_title(f"layer {idx + 1}")
