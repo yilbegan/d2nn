@@ -9,8 +9,7 @@ import yaml
 
 from d2nn.data import mnist_loaders
 from d2nn.models.classifier import DiffractiveClassifier
-from d2nn.viz import plot_phase_masks
-from d2nn.viz.classification import plot_confusion_matrix, plot_input_output_table
+from d2nn.viz import plot_confusion_matrix, plot_input_output_table, plot_phase_masks
 
 from .config import parse_config
 from .train import evaluate, train

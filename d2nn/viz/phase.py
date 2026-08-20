@@ -1,36 +1,43 @@
+# pyright: reportUnknownMemberType=false
+
 import math
-import pathlib
 from collections.abc import Iterable
 from typing import cast
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 
 from ..optics import DiffractiveLayer
+from .plotting import FigureGrid, OutputPath, float_matrix
+
+__all__ = ["plot_phase_masks"]
 
 
-def plot_phase_masks(modules: Iterable[nn.Module], path: pathlib.Path | str) -> None:
-    layers = cast(list[DiffractiveLayer], list(modules))
-    n = len(layers)
-    cols = math.ceil(math.sqrt(n))
-    rows = math.ceil(n / cols)
+def plot_phase_masks(modules: Iterable[nn.Module], path: OutputPath) -> None:
+    layers: list[DiffractiveLayer] = []
+    for index, module in enumerate(modules):
+        if not isinstance(module, DiffractiveLayer):
+            received = type(module).__name__
+            raise TypeError(
+                f"modules[{index}] must be a DiffractiveLayer, got {received}"
+            )
+        layers.append(module)
 
-    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False)
+    grid = FigureGrid.create(len(layers))
     for idx, layer in enumerate(layers):
-        ax = axes[idx // cols][idx % cols]
-        phase = cast(torch.Tensor, layer.phase()).detach().cpu().numpy()
-        wrapped = np.mod(phase, 2 * np.pi)
-        im = ax.imshow(wrapped, cmap="twilight", vmin=0, vmax=2 * np.pi)
-        ax.set_title(f"layer {idx + 1}")
-        ax.set_xticks([])
-        ax.set_yticks([])
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="phase (rad)")
+        axis = grid.axes[idx]
+        phase = cast(torch.Tensor, layer.phase())
+        wrapped = float_matrix(torch.remainder(phase, math.tau))
+        image = axis.imshow(wrapped, cmap="twilight", vmin=0.0, vmax=math.tau)
+        _ = axis.set_title(f"layer {idx + 1}")
+        _ = axis.set_xticks([])
+        _ = axis.set_yticks([])
+        _ = grid.figure.colorbar(
+            image,
+            ax=axis,
+            fraction=0.046,
+            pad=0.04,
+            label="phase (rad)",
+        )
 
-    for idx in range(n, rows * cols):
-        axes[idx // cols][idx % cols].axis("off")
-
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    grid.save(path)

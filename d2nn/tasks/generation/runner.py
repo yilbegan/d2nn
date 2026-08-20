@@ -6,8 +6,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from d2nn.data import mnist_loaders
 from d2nn.models.generative import DiffractiveGenerativeModel
-from d2nn.viz import plot_phase_masks
-from d2nn.viz.generation import plot_decoder_intensity, plot_generated_digits
+from d2nn.viz import plot_decoder_intensity, plot_generated_digits, plot_phase_masks
 
 from .config import parse_config
 from .teacher import (
