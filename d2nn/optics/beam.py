@@ -27,15 +27,13 @@ class GaussianBeam(nn.Module):
     def rayleigh_distance(self) -> float:
         return torch.pi * self.waist_radius**2 / (self.beam_quality * self.wavelength)
 
-
     @override
     def forward(self, mask: torch.Tensor) -> torch.Tensor:
         return self.field() * mask
 
     def field(self):
         side = (
-            torch.arange(self.size, dtype=torch.float64)
-            - (self.size - 1) / 2
+            torch.arange(self.size, dtype=torch.float64) - (self.size - 1) / 2
         ) * self.pixel_size
 
         y, x = torch.meshgrid(side, side, indexing="ij")
