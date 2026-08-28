@@ -12,14 +12,21 @@ class GaussianBeam(nn.Module):
         wavelength: float,
         distance: float,
         waist_radius: float,
+        beam_quality: float = 1.0,
     ):
         super().__init__()
 
         self.size: int = size
-        self.pixel_size: float = size
+        self.pixel_size: float = pixel_size
         self.wavelength: float = wavelength
         self.distance: float = distance
         self.waist_radius: float = waist_radius
+        self.beam_quality: float = beam_quality
+
+    @property
+    def rayleigh_distance(self) -> float:
+        return torch.pi * self.waist_radius**2 / (self.beam_quality * self.wavelength)
+
 
     @override
     def forward(self, mask: torch.Tensor) -> torch.Tensor:
@@ -32,15 +39,21 @@ class GaussianBeam(nn.Module):
         ) * self.pixel_size
 
         y, x = torch.meshgrid(side, side, indexing="ij")
-
         radius = x**2 + y**2
-
         wave_number = 2 * torch.pi / self.wavelength
-        rayleigh_distance = torch.pi * self.waist_radius**2 / self.wavelength
 
-        q = torch.complex(
-            torch.as_tensor(self.distance, dtype=torch.float64),
-            torch.as_tensor(rayleigh_distance, dtype=torch.float64),
+        beam_radius = self.waist_radius * torch.sqrt(
+            torch.as_tensor(
+                1 + (self.distance / self.rayleigh_distance) ** 2,
+                dtype=torch.float64,
+            )
         )
 
-        return torch.exp(-1j * wave_number * radius / q / 2)
+        curvature_radius = self.distance * (
+            1 + (self.distance / self.rayleigh_distance) ** 2
+        )
+
+        amplitude = -radius / beam_radius**2
+        phase = wave_number * radius / (2 * curvature_radius)
+
+        return torch.exp(amplitude - 1j * phase)
