@@ -13,7 +13,7 @@ model:
   base_thickness: 0.5e-3
   det_size: 12
   scale_factor: 6.0
-  quantization_levels: 16
+  quantization_levels: 8
 
 training:
   epochs: 17
