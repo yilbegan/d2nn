@@ -24,8 +24,7 @@ __all__ = [
 ]
 
 
-class ConfigError(ValueError):
-    ...
+class ConfigError(ValueError): ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -49,7 +49,7 @@ def run_classification(
         _ = (result_path / "config.yaml").write_text(config_source, encoding="utf-8")
         train_loader, test_loader = mnist_loaders(
             root=str(dataset_dir),
-            size=config.model.size,
+            layer_size=config.model.size,
             batch_size=config.training.batch_size,
             num_workers=config.training.num_workers,
         )

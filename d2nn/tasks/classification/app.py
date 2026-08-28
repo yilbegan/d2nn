@@ -56,12 +56,11 @@ def train(config: str) -> None:
 )
 def export(
     run_id: str,
-    base_thickness: float = 0.5e-3,
     base_padding: float = 0.01,
-    delta_n: float = 0.7227,
     force: bool = True,
 ) -> None:
     from d2nn.export.flat import create_flat_mesh
+    from d2nn.export.holder import create_holder_mesh
     from d2nn.export.relief import get_relief
     from d2nn.models.classifier import DiffractiveClassifier
     from d2nn.optics.diffractive import DiffractiveLayer
@@ -82,12 +81,14 @@ def export(
     layers_path.mkdir()
     for i, layer in enumerate(model.stack.layers):
         layer = cast(DiffractiveLayer, layer)
-        relief = get_relief(layer, delta_n=delta_n)
+        relief = get_relief(
+            layer, delta_n=layer.physical_parameters.refractive_index_delta
+        )
 
         mesh = create_flat_mesh(
             relief=relief,
             pixel_size=model.config.pixel_size,
-            base_thickness=base_thickness,
+            base_thickness=model.config.base_thickness,
             base_padding=base_padding,
         )
 
@@ -98,5 +99,17 @@ def export(
             ),
         )
 
+    holder = create_holder_mesh(
+        num_layers=len(model.stack.layers),
+        layer_size=model.config.size * model.config.pixel_size + 2 * base_padding,
+        layer_thickness=model.config.base_thickness,
+        layer_distance=model.config.distance,
+        slot_depth=base_padding / 2,
+    )
+    _ = cast(
+        object,
+        holder.export(layers_path / "holder.stl"),  # pyright: ignore[reportUnknownMemberType]
+    )
+
     results_volume.commit()
-    print(f"created 3d models for {len(model.stack.layers)} layer(s)")
+    print(f"created 3d models for {len(model.stack.layers)} layer(s) and a holder")

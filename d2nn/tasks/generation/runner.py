@@ -151,7 +151,9 @@ def run_teacher_training(
     print(f"training teacher on {device}")
     train_loader, _ = mnist_loaders(
         root=str(dataset_dir),
-        size=model_config.size,
+        layer_size=model_config.size,
+        mask_size=1.0,
+        binarize=False,
         batch_size=training_config.batch_size,
         num_workers=training_config.num_workers,
     )
