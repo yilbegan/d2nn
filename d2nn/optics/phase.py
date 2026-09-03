@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal, cast, override
+from typing import Literal, override
 
 import torch
 import torch.nn as nn
@@ -12,10 +12,10 @@ class PhaseConditions:
     quantization_mode: Literal["soft", "hard"] = "soft"
 
     def __post_init__(self) -> None:
-        steepness = cast(object, self.quantization_steepness)
-        if isinstance(steepness, bool) or not isinstance(steepness, int | float):
-            raise TypeError("quantization_steepness must be a number")
-        if not isfinite(steepness) or steepness <= 0:
+        if (
+            not isfinite(self.quantization_steepness)
+            or self.quantization_steepness <= 0
+        ):
             raise ValueError("quantization_steepness must be finite and positive")
         if self.quantization_mode not in ("soft", "hard"):
             raise ValueError("quantization_mode must be 'soft' or 'hard'")

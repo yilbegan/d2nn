@@ -14,16 +14,6 @@ class DiffractiveStackConditions:
     layers: DiffractiveLayerConditions | None = None
     output_propagation: PropagationConditions | None = None
 
-    def __post_init__(self) -> None:
-        layers = cast(object, self.layers)
-        if layers is not None and not isinstance(layers, DiffractiveLayerConditions):
-            raise TypeError("layers must be DiffractiveLayerConditions or None")
-        output_propagation = cast(object, self.output_propagation)
-        if output_propagation is not None and not isinstance(
-            output_propagation, PropagationConditions
-        ):
-            raise TypeError("output_propagation must be PropagationConditions or None")
-
 
 class DiffractiveStack(nn.Module):
     def __init__(

@@ -18,6 +18,18 @@ class EncoderConfig:
     num_classes: int = 10
     class_embedding_size: int = 32
 
+    def __post_init__(self) -> None:
+        if self.in_size < 1:
+            raise ValueError("in_size must be at least 1")
+        if self.out_size < 2:
+            raise ValueError("out_size must be at least 2")
+        if self.num_layers < 1:
+            raise ValueError("num_layers must be at least 1")
+        if self.num_classes < 2:
+            raise ValueError("num_classes must be at least 2")
+        if self.class_embedding_size < 1:
+            raise ValueError("class_embedding_size must be at least 1")
+
 
 @dataclass(frozen=True, slots=True)
 class DecoderConfig:
@@ -32,6 +44,30 @@ class DecoderConfig:
     base_thickness: float = 0.0
     scale_factor: float = 6.0
     quantization_levels: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.size < 2:
+            raise ValueError("size must be at least 2")
+        if self.num_layers < 1:
+            raise ValueError("num_layers must be at least 1")
+        if self.quantization_levels is not None and self.quantization_levels < 2:
+            raise ValueError("quantization_levels must be at least 2")
+        if self.wavelength <= 0:
+            raise ValueError("wavelength must be positive")
+        if self.pixel_size <= 0:
+            raise ValueError("pixel_size must be positive")
+        if self.scale_factor <= 0:
+            raise ValueError("scale_factor must be positive")
+        if self.distance < 0:
+            raise ValueError("distance must be non-negative")
+        if self.base_thickness < 0:
+            raise ValueError("base_thickness must be non-negative")
+        if self.extinction_coefficient < 0:
+            raise ValueError("extinction_coefficient must be non-negative")
+        if self.refractive_index == self.environment_refractive_index:
+            raise ValueError(
+                "refractive_index must differ from environment_refractive_index"
+            )
 
     @property
     def physical_parameters(self) -> PhysicalParameters:

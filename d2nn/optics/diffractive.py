@@ -24,19 +24,8 @@ class DiffractiveLayerConditions:
             ("fabrication_error_std", self.fabrication_error_std),
             ("xy_drift_std", self.xy_drift_std),
         ):
-            value = cast(object, value)
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise TypeError(f"{name} must be a number")
             if not isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and non-negative")
-        propagation = cast(object, self.propagation)
-        if propagation is not None and not isinstance(
-            propagation, PropagationConditions
-        ):
-            raise TypeError("propagation must be PropagationConditions or None")
-        phase = cast(object, self.phase)
-        if phase is not None and not isinstance(phase, PhaseConditions):
-            raise TypeError("phase must be PhaseConditions or None")
 
 
 class DiffractiveLayer(nn.Module):

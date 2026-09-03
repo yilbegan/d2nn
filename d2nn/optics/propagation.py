@@ -17,10 +17,7 @@ class PropagationConditions:
     distance_std: float = 0.0
 
     def __post_init__(self) -> None:
-        distance_std = cast(object, self.distance_std)
-        if isinstance(distance_std, bool) or not isinstance(distance_std, int | float):
-            raise TypeError("distance_std must be a number")
-        if not isfinite(distance_std) or distance_std < 0:
+        if not isfinite(self.distance_std) or self.distance_std < 0:
             raise ValueError("distance_std must be finite and non-negative")
 
 
