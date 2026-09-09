@@ -54,4 +54,4 @@ class Detector(nn.Module):
     @override
     def forward(self, field: torch.Tensor) -> torch.Tensor:
         intensity = field.abs() ** 2  # (B, H, W)
-        return torch.einsum("bhw,chw->bc", intensity, self.masks)
+        return torch.einsum("bhw,chw->bc", intensity, self.masks.to(intensity.dtype))

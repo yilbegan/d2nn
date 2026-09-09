@@ -6,6 +6,7 @@ import torch.nn as nn
 
 from d2nn.data import Batch
 from d2nn.models.classifier import DiffractiveClassifier
+from d2nn.optics.input import FieldEncoder
 from d2nn.training.schedule import Schedule
 
 from .config import TrainingConfig
@@ -44,7 +45,11 @@ def _set_learning_rate(optimizer: torch.optim.Optimizer, learning_rate: float) -
 
 
 def evaluate(
-    model: DiffractiveClassifier, loader: _BatchLoader, device: torch.device
+    model: DiffractiveClassifier,
+    loader: _BatchLoader,
+    device: torch.device,
+    *,
+    encoder: FieldEncoder,
 ) -> Metrics:
     _ = model.eval()
     correct = total = 0
@@ -53,12 +58,13 @@ def evaluate(
         for images, targets in loader:
             images = images.squeeze(1).to(device)  # (B, H, W)
             targets = targets.to(device)
-            scores = cast(torch.Tensor, model(images))  # (B, num_classes)
+            field = encoder(images)
+            scores = cast(torch.Tensor, model(field))  # (B, num_classes)
 
             correct += int((scores.argmax(dim=1) == targets).sum().item())
             total += targets.size(0)
 
-            input_intensity = images.abs().pow(2).sum(dim=(1, 2))
+            input_intensity = field.abs().square().sum(dim=(1, 2))
             correct_intensity = scores.gather(1, targets.unsqueeze(1)).squeeze(1)
             detector_intensity = scores.sum(dim=1)
             correct_eff_sum += (correct_intensity / input_intensity).sum().item()
@@ -79,6 +85,8 @@ def train(
     config: TrainingConfig,
     schedule: Schedule[TrainingParameters],
     on_epoch: EpochCallback | None = None,
+    *,
+    encoder: FieldEncoder,
 ) -> DiffractiveClassifier:
     steps_per_epoch = len(train_loader)
     if steps_per_epoch == 0:
@@ -108,10 +116,11 @@ def train(
 
                 images = images.squeeze(1).to(device)  # (B, H, W)
                 targets = targets.to(device)
+                field = encoder(images)
 
                 optimizer.zero_grad(set_to_none=True)
                 loss_value = criterion(
-                    cast(torch.Tensor, model(images)),
+                    cast(torch.Tensor, model(field)),
                     targets,
                     config.loss,
                     scale=model.detector.num_points,
@@ -128,7 +137,7 @@ def train(
                 global_step += 1
 
             model.set_conditions(None)
-            metrics = evaluate(model, test_loader, device)
+            metrics = evaluate(model, test_loader, device, encoder=encoder)
             avg_loss = running_loss / steps_per_epoch
             print(
                 "  ".join(

@@ -42,6 +42,4 @@ schedule:
     start: 2.0e-3
     stop: 2.0e-4
 
-  conditions:
-    kind: const
-    value: null
+  conditions: null

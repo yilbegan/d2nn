@@ -5,8 +5,10 @@ from typing import cast
 
 import torch
 
-from ..data import Batch
-from ..models.classifier import DiffractiveClassifier
+from d2nn.data import Batch
+from d2nn.models.classifier import DiffractiveClassifier
+from d2nn.optics.input import FieldEncoder
+
 from .plotting import (
     FigureGrid,
     OutputPath,
@@ -56,9 +58,8 @@ def _targets_on_cpu(
     return targets
 
 
-def detector_field(model: DiffractiveClassifier, images: torch.Tensor) -> torch.Tensor:
-    field = cast(torch.Tensor, model.stack(images.to(torch.complex64)))
-    return field.abs().square().detach().cpu()
+def detector_field(model: DiffractiveClassifier, field: torch.Tensor) -> torch.Tensor:
+    return model.propagate(field).abs().square().detach().cpu()
 
 
 def downscale(x: torch.Tensor, factor: int = DOWNSCALE) -> torch.Tensor:
@@ -104,6 +105,8 @@ def energy_distribution(
     batches: Batches,
     device: torch.device,
     num_classes: int = 10,
+    *,
+    encoder: FieldEncoder,
 ) -> torch.Tensor:
     _require_num_classes(num_classes)
     _ = model.eval()
@@ -118,7 +121,7 @@ def energy_distribution(
             num_classes=num_classes,
         )
         scores = (
-            cast(torch.Tensor, model(images))
+            cast(torch.Tensor, model(encoder(images)))
             .detach()
             .to(device="cpu", dtype=torch.float32)
         )
@@ -141,9 +144,11 @@ def plot_energy_distribution(
     device: torch.device,
     path: OutputPath,
     num_classes: int = 10,
+    *,
+    encoder: FieldEncoder,
 ) -> None:
     distribution = float_matrix(
-        energy_distribution(model, batches, device, num_classes)
+        energy_distribution(model, batches, device, num_classes, encoder=encoder)
     )
     grid = FigureGrid.create(
         num_classes,
@@ -173,6 +178,8 @@ def confusion_matrix(
     batches: Batches,
     device: torch.device,
     num_classes: int = 10,
+    *,
+    encoder: FieldEncoder,
 ) -> torch.Tensor:
     _require_num_classes(num_classes)
     _ = model.eval()
@@ -185,7 +192,7 @@ def confusion_matrix(
             batch_size=images.shape[0],
             num_classes=num_classes,
         )
-        scores = cast(torch.Tensor, model(images))
+        scores = cast(torch.Tensor, model(encoder(images)))
         expected_shape = (images.shape[0], num_classes)
         if scores.shape != expected_shape:
             raise ValueError(
@@ -207,8 +214,10 @@ def plot_confusion_matrix(
     device: torch.device,
     path: OutputPath,
     num_classes: int = 10,
+    *,
+    encoder: FieldEncoder,
 ) -> None:
-    matrix = confusion_matrix(model, batches, device, num_classes)
+    matrix = confusion_matrix(model, batches, device, num_classes, encoder=encoder)
     normalized = matrix / matrix.sum(dim=1, keepdim=True).clamp_min(1)
     matrix_values = int_matrix(matrix)
     normalized_values = float_matrix(normalized)
@@ -258,19 +267,21 @@ def plot_input_output_table(
     device: torch.device,
     path: OutputPath,
     num_classes: int = 10,
+    *,
+    encoder: FieldEncoder,
 ) -> None:
     _require_num_classes(num_classes)
     _ = model.eval()
     images, labels = sample_one_per_digit(batches, num_classes)
     with torch.no_grad():
-        intensity = detector_field(model, images.to(device))
+        intensity = detector_field(model, encoder(images.to(device)))
 
     masks = cast(torch.Tensor, model.detector.masks).detach().cpu()
     expected_mask_shape = (num_classes, *intensity.shape[-2:])
     if masks.shape != expected_mask_shape:
         raise ValueError(f"detector masks must have shape {expected_mask_shape}")
 
-    energy = torch.einsum("nhw,chw->nc", intensity, masks)
+    energy = torch.einsum("nhw,chw->nc", intensity, masks.to(intensity.dtype))
     distribution = 100.0 * energy / energy.sum(dim=1, keepdim=True).clamp_min(1e-12)
 
     outputs = downscale(intensity)

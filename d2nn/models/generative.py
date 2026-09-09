@@ -1,69 +1,47 @@
 import pathlib
-from dataclasses import asdict, dataclass, replace
-from typing import NotRequired, Self, TypedDict, cast, override
+from typing import Annotated, Self, TypedDict, cast, override
 
+import msgspec
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from msgspec import Meta
 
+from d2nn.config import Config, NonNegativeFloat, PositiveFloat, PositiveInt
 from d2nn.optics.parameters import PhysicalParameters
 from d2nn.optics.stack import DiffractiveStack, DiffractiveStackConditions
 
-
-@dataclass(frozen=True, slots=True)
-class EncoderConfig:
-    in_size: int = 32
-    out_size: int = 200
-    num_layers: int = 3
-    num_classes: int = 10
-    class_embedding_size: int = 32
-
-    def __post_init__(self) -> None:
-        if self.in_size < 1:
-            raise ValueError("in_size must be at least 1")
-        if self.out_size < 2:
-            raise ValueError("out_size must be at least 2")
-        if self.num_layers < 1:
-            raise ValueError("num_layers must be at least 1")
-        if self.num_classes < 2:
-            raise ValueError("num_classes must be at least 2")
-        if self.class_embedding_size < 1:
-            raise ValueError("class_embedding_size must be at least 1")
+__all__ = [
+    "DecoderConfig",
+    "DiffractiveDecoder",
+    "DiffractiveEncoder",
+    "DiffractiveGenerativeModel",
+    "EncoderConfig",
+]
 
 
-@dataclass(frozen=True, slots=True)
-class DecoderConfig:
-    size: int = 200
-    num_layers: int = 3
-    wavelength: float = 5.32e-7
+class EncoderConfig(Config, frozen=True):
+    in_size: PositiveInt = 32
+    out_size: Annotated[int, Meta(ge=2)] = 200
+    num_layers: PositiveInt = 3
+    num_classes: Annotated[int, Meta(ge=2)] = 10
+    class_embedding_size: PositiveInt = 32
+
+
+class DecoderConfig(Config, frozen=True):
+    size: Annotated[int, Meta(ge=2)] = 200
+    num_layers: PositiveInt = 3
+    wavelength: PositiveFloat = 5.32e-7
     refractive_index: float = 1.5
-    extinction_coefficient: float = 0.0
+    extinction_coefficient: NonNegativeFloat = 0.0
     environment_refractive_index: float = 1.0
-    pixel_size: float = 3.6e-5
-    distance: float = 0.1
-    base_thickness: float = 0.0
-    scale_factor: float = 6.0
-    quantization_levels: int | None = None
+    pixel_size: PositiveFloat = 3.6e-5
+    distance: NonNegativeFloat = 0.1
+    base_thickness: NonNegativeFloat = 0.0
+    scale_factor: PositiveFloat = 6.0
+    quantization_levels: Annotated[int, Meta(ge=2)] | None = None
 
     def __post_init__(self) -> None:
-        if self.size < 2:
-            raise ValueError("size must be at least 2")
-        if self.num_layers < 1:
-            raise ValueError("num_layers must be at least 1")
-        if self.quantization_levels is not None and self.quantization_levels < 2:
-            raise ValueError("quantization_levels must be at least 2")
-        if self.wavelength <= 0:
-            raise ValueError("wavelength must be positive")
-        if self.pixel_size <= 0:
-            raise ValueError("pixel_size must be positive")
-        if self.scale_factor <= 0:
-            raise ValueError("scale_factor must be positive")
-        if self.distance < 0:
-            raise ValueError("distance must be non-negative")
-        if self.base_thickness < 0:
-            raise ValueError("base_thickness must be non-negative")
-        if self.extinction_coefficient < 0:
-            raise ValueError("extinction_coefficient must be non-negative")
         if self.refractive_index == self.environment_refractive_index:
             raise ValueError(
                 "refractive_index must differ from environment_refractive_index"
@@ -79,32 +57,10 @@ class DecoderConfig:
         )
 
 
-class _EncoderConfigData(TypedDict):
-    in_size: int
-    out_size: int
-    num_layers: int
-    num_classes: int
-    class_embedding_size: int
-
-
-class _DecoderConfigData(TypedDict):
-    size: int
-    num_layers: int
-    wavelength: float
-    refractive_index: NotRequired[float]
-    extinction_coefficient: NotRequired[float]
-    environment_refractive_index: NotRequired[float]
-    pixel_size: float
-    distance: float
-    base_thickness: NotRequired[float]
-    scale_factor: float
-    quantization_levels: int | None
-
-
-class _GenerativeCheckpoint(TypedDict):
+class _Checkpoint(TypedDict):
     state_dict: dict[str, torch.Tensor]
-    encoder_config: _EncoderConfigData
-    decoder_config: _DecoderConfigData
+    encoder_config: dict[str, object]
+    decoder_config: dict[str, object]
 
 
 class DiffractiveEncoder(nn.Module):
@@ -203,16 +159,10 @@ class DiffractiveGenerativeModel(nn.Module):
         return decoded, scale
 
     def save(self, path: str | pathlib.Path) -> None:
-        checkpoint: _GenerativeCheckpoint = {
+        checkpoint: _Checkpoint = {
             "state_dict": self.state_dict(),
-            "encoder_config": cast(
-                _EncoderConfigData,
-                cast(object, asdict(self.encoder.config)),
-            ),
-            "decoder_config": cast(
-                _DecoderConfigData,
-                cast(object, asdict(self.decoder.config)),
-            ),
+            "encoder_config": msgspec.to_builtins(self.encoder.config),
+            "decoder_config": msgspec.to_builtins(self.decoder.config),
         }
         torch.save(checkpoint, path)
 
@@ -225,16 +175,19 @@ class DiffractiveGenerativeModel(nn.Module):
         quantization_levels: int | None = None,
     ) -> Self:
         checkpoint = cast(
-            _GenerativeCheckpoint,
+            _Checkpoint,
             torch.load(path, map_location=device, weights_only=True),
         )
-        encoder_config = EncoderConfig(**checkpoint["encoder_config"])
-        decoder_config = DecoderConfig(**checkpoint["decoder_config"])
+        decoder_document = checkpoint["decoder_config"]
         if quantization_levels is not None:
-            decoder_config = replace(
-                decoder_config, quantization_levels=quantization_levels
-            )
+            decoder_document = {
+                **decoder_document,
+                "quantization_levels": quantization_levels,
+            }
 
-        model = cls(encoder_config, decoder_config)
+        model = cls(
+            msgspec.convert(checkpoint["encoder_config"], EncoderConfig),
+            msgspec.convert(decoder_document, DecoderConfig),
+        )
         _ = model.load_state_dict(checkpoint["state_dict"])
         return model

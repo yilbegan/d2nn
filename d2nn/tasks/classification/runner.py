@@ -1,14 +1,14 @@
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import msgspec
 import torch
 import wandb
-import yaml
 
 from d2nn.data import mnist_loaders
 from d2nn.models.classifier import DiffractiveClassifier
+from d2nn.optics.input import InputEncoder
 from d2nn.viz import plot_confusion_matrix, plot_input_output_table, plot_phase_masks
 
 from .config import parse_config
@@ -28,7 +28,7 @@ def run_classification(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"training on {device}")
 
-    document = cast(dict[str, object], yaml.safe_load(config_source))
+    document = cast(dict[str, object], msgspec.to_builtins(config))
     run = wandb.init(project="d2nn-classification", name=run_id, config=document)
 
     def log_epoch(result: EpochResult) -> None:
@@ -50,10 +50,17 @@ def run_classification(
         train_loader, test_loader = mnist_loaders(
             root=str(dataset_dir),
             layer_size=config.model.size,
+            mask_size=config.input.mask.size,
             batch_size=config.training.batch_size,
             num_workers=config.training.num_workers,
         )
         model = DiffractiveClassifier(config.model)
+        encoder = InputEncoder(
+            config.input,
+            size=config.model.size,
+            pixel_size=config.model.pixel_size,
+            wavelength=config.model.wavelength,
+        ).to(device)
         _ = train(
             model,
             train_loader,
@@ -62,22 +69,33 @@ def run_classification(
             config.training,
             config.schedule,
             on_epoch=log_epoch,
+            encoder=encoder,
         )
-        metrics = evaluate(model, test_loader, device)
+        metrics = evaluate(model, test_loader, device, encoder=encoder)
 
         model.save(result_path / "d2nn_mnist.pt")
         plot_phase_masks(model.stack.layers, result_path / "phase_masks.png")
         plot_input_output_table(
-            model, test_loader, device, result_path / "input_output_table.png"
+            model,
+            test_loader,
+            device,
+            result_path / "input_output_table.png",
+            num_classes=config.model.num_classes,
+            encoder=encoder,
         )
         plot_confusion_matrix(
-            model, test_loader, device, result_path / "confusion_matrix.png"
+            model,
+            test_loader,
+            device,
+            result_path / "confusion_matrix.png",
+            num_classes=config.model.num_classes,
+            encoder=encoder,
         )
 
         run.summary["final_test_accuracy"] = metrics.accuracy
         run.summary["final_correct_efficiency"] = metrics.correct_efficiency
         run.summary["final_total_efficiency"] = metrics.total_efficiency
-        run.summary["model"] = asdict(config.model)
+        run.summary["model"] = msgspec.to_builtins(config.model)
         run.log(
             {
                 "phase_masks": wandb.Image(str(result_path / "phase_masks.png")),

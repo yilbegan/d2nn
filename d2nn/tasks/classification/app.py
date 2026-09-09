@@ -8,7 +8,9 @@ app = modal.App("d2nn-classification")
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("torch", "torchvision", "matplotlib", "wandb", "trimesh", "pyyaml")
+    .pip_install(
+        "torch", "torchvision", "matplotlib", "wandb", "trimesh", "msgspec[yaml]"
+    )
     .add_local_python_source("d2nn")
 )
 
@@ -37,8 +39,6 @@ def _train(config_yaml: str) -> float:
 
 @app.local_entrypoint(name="train")
 def train(config: str) -> None:
-    """Validate a local YAML file and submit it to the GPU training function."""
-
     from .config import load_config
 
     config_path = pathlib.Path(config)

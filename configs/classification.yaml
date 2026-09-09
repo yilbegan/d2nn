@@ -15,6 +15,22 @@ model:
   scale_factor: 6.0
   quantization_levels: 8
 
+input:
+  mask:
+    # fraction of the layer side that the digit spans
+    size: 0.4
+    # `amplitude` transmits the binary mask as is,
+    # `phase` encodes it in phase: 0 -> 0, 1 -> pi
+    type: amplitude
+
+  beam:
+    # `plane` illuminates the mask with a plane wave and takes no `parameters`
+    type: gaussian
+    parameters:
+      distance: 0.173
+      waist_radius: 0.0066
+      beam_quality: 5.33
+
 training:
   epochs: 17
   batch_size: 500
@@ -26,125 +42,81 @@ schedule:
     kind: cosine
     start: 0.01
     stop: 0.001
+
+  # stages start at the given progress and run until the next stage begins
   conditions:
-    kind: piecewise
-    phases:
-      - at: 0.0
-        schedule:
-          kind: const
-          value: null
+    - at: 0.0
+      schedule: null
 
-      - at: 0.29411764705882354 # 5 / 17
-        schedule:
-          kind: struct
-          name: DiffractiveStackConditions
-          values:
-            layers:
-              kind: struct
-              name: DiffractiveLayerConditions
-              values:
-                fabrication_error_std:
-                  kind: linear
-                  start: 0.0
-                  stop: 0.05e-3
-                xy_drift_std:
-                  kind: linear
-                  start: 0.0
-                  stop: 0.1e-3
-                propagation:
-                  kind: struct
-                  name: PropagationConditions
-                  values:
-                    distance_std:
-                      kind: linear
-                      start: 0.0
-                      stop: 0.1e-3
-            output_propagation:
-              kind: struct
-              name: PropagationConditions
-              values:
-                distance_std:
-                  kind: linear
-                  start: 0.0
-                  stop: 0.1e-3
+    - at: 0.29411764705882354 # 5 / 17
+      schedule:
+        layers:
+          fabrication_error_std:
+            kind: linear
+            start: 0.0
+            stop: 0.05e-3
+          xy_drift_std:
+            kind: linear
+            start: 0.0
+            stop: 0.1e-3
+          propagation:
+            distance_std:
+              kind: linear
+              start: 0.0
+              stop: 0.1e-3
+        output_propagation:
+          distance_std:
+            kind: linear
+            start: 0.0
+            stop: 0.1e-3
 
-      - at: 0.5882352941176471 # 10 / 17
-        schedule:
-          kind: struct
-          name: DiffractiveStackConditions
-          values:
-            layers:
-              kind: struct
-              name: DiffractiveLayerConditions
-              values:
-                fabrication_error_std:
-                  kind: const
-                  value: 0.05e-3
-                xy_drift_std:
-                  kind: const
-                  value: 0.1e-3
-                phase:
-                  kind: struct
-                  name: PhaseConditions
-                  values:
-                    quantization_steepness:
-                      kind: linear
-                      start: 4.0
-                      stop: 40.0
-                    quantization_mode:
-                      kind: const
-                      value: soft
-                propagation:
-                  kind: struct
-                  name: PropagationConditions
-                  values:
-                    distance_std:
-                      kind: const
-                      value: 0.1e-3
-            output_propagation:
-              kind: struct
-              name: PropagationConditions
-              values:
-                distance_std:
-                  kind: const
-                  value: 0.1e-3
+    - at: 0.5882352941176471 # 10 / 17
+      schedule:
+        layers:
+          fabrication_error_std:
+            kind: const
+            value: 0.05e-3
+          xy_drift_std:
+            kind: const
+            value: 0.1e-3
+          phase:
+            quantization_steepness:
+              kind: linear
+              start: 4.0
+              stop: 40.0
+            quantization_mode:
+              kind: const
+              value: soft
+          propagation:
+            distance_std:
+              kind: const
+              value: 0.1e-3
+        output_propagation:
+          distance_std:
+            kind: const
+            value: 0.1e-3
 
-      - at: 0.8823529411764706 # 15 / 17
-        schedule:
-          kind: struct
-          name: DiffractiveStackConditions
-          values:
-            layers:
-              kind: struct
-              name: DiffractiveLayerConditions
-              values:
-                fabrication_error_std:
-                  kind: const
-                  value: 0.05e-3
-                xy_drift_std:
-                  kind: const
-                  value: 0.1e-3
-                phase:
-                  kind: struct
-                  name: PhaseConditions
-                  values:
-                    quantization_steepness:
-                      kind: const
-                      value: 40.0
-                    quantization_mode:
-                      kind: const
-                      value: hard
-                propagation:
-                  kind: struct
-                  name: PropagationConditions
-                  values:
-                    distance_std:
-                      kind: const
-                      value: 0.1e-3
-            output_propagation:
-              kind: struct
-              name: PropagationConditions
-              values:
-                distance_std:
-                  kind: const
-                  value: 0.1e-3
+    - at: 0.8823529411764706 # 15 / 17
+      schedule:
+        layers:
+          fabrication_error_std:
+            kind: const
+            value: 0.05e-3
+          xy_drift_std:
+            kind: const
+            value: 0.1e-3
+          phase:
+            quantization_steepness:
+              kind: const
+              value: 40.0
+            quantization_mode:
+              kind: const
+              value: hard
+          propagation:
+            distance_std:
+              kind: const
+              value: 0.1e-3
+        output_propagation:
+          distance_std:
+            kind: const
+            value: 0.1e-3
